@@ -115,7 +115,7 @@ J-Link 安装后，工具会从 PATH、`JLINK_ROOT` 以及 Windows 的 `Program 
       "buildType": "Debug",
       "debugOptimization": "Og",
       "releaseOptimization": "Os",
-      "extraDefines": ["APP_FEATURE=1"]
+      "defines": ["USE_HAL_DRIVER", "STM32F411xE", "APP_FEATURE=1"]
     }
   }
 }
@@ -266,13 +266,15 @@ pwsh ./stm32.ps1 build -ConfigFile ./configs/project.example.json
 
 最终选择也会写入工程的 `CMake-GCC/stm32-project.json`。生成后的真实 GCC 命令可在 `CMake-GCC/build/<配置>/compile_commands.json` 中检查。
 
-## 自定义宏定义
+## 工程宏定义
 
-每个工程可在总配置中独立设置 `extraDefines`：
+每个工程的全部有效宏都显示在总配置的 `defines` 中。Keil → CMake 转换会自动读取 `.uvprojx` 的 Define 项，合并芯片宏并写回当前工程配置；同事可以直接在同一数组中添加或删除自定义宏：
 
 ```json
 {
-  "extraDefines": [
+  "defines": [
+    "USE_HAL_DRIVER",
+    "STM32F411xE",
     "fflush=stm32_fflush",
     "APP_FEATURE=1",
     "BOARD_REV=2"
@@ -280,7 +282,7 @@ pwsh ./stm32.ps1 build -ConfigFile ./configs/project.example.json
 }
 ```
 
-宏使用 `NAME` 或 `NAME=value` 格式。它们会合并到从 Keil或原生 CMake 读取的宏列表中，并同时参与以下输出：
+宏使用 `NAME` 或 `NAME=value` 格式。`build` 以该列表为工程宏来源，并把芯片配置补充的最终有效宏同步回这里；不会删除同事手工添加的条目。兼容旧配置的 `extraDefines` 仍可读取，但新配置统一使用 `defines`。所有宏同时参与以下输出：
 
 - GCC/CMake 的 `target_compile_definitions`；
 - `compile_commands.json` 与 clangd/LLVM 索引；

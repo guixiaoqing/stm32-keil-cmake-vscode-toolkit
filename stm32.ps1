@@ -22,11 +22,14 @@ param(
     [string]$KeilCompiler,
     [ValidateSet('auto', 'cubemx', 'parser')]
     [string]$ConversionBackend,
-    [string[]]$ExtraDefines
+    [string[]]$ExtraDefines,
+    [string[]]$Defines
 )
 
 $ErrorActionPreference = 'Stop'
 $engine = Join-Path $PSScriptRoot 'scripts/stm32-project.ps1'
+$extraDefinesConfigured = $PSBoundParameters.ContainsKey('ExtraDefines')
+$definesConfigured = $PSBoundParameters.ContainsKey('Defines')
 
 $effectiveConfigFile = $ConfigFile
 if (-not $effectiveConfigFile) {
@@ -139,7 +142,7 @@ if ($effectiveConfigFile) {
             foreach ($item in $projectProperties) {
                 Write-Host "`n=== $configuredAction : $($item.Name) ===" -ForegroundColor Cyan
                 $childArguments = @{ ConfigFile=$configPath; Project=$item.Name; Action=$configuredAction }
-                foreach ($key in @('Config','DebugOptimization','ReleaseOptimization','KeilCompiler','ConversionBackend','ExtraDefines')) {
+                foreach ($key in @('Config','DebugOptimization','ReleaseOptimization','KeilCompiler','ConversionBackend','ExtraDefines','Defines')) {
                     if ($PSBoundParameters.ContainsKey($key)) { $childArguments[$key] = $PSBoundParameters[$key] }
                 }
                 & $PSCommandPath @childArguments
@@ -170,7 +173,14 @@ if ($effectiveConfigFile) {
     if (-not $PSBoundParameters.ContainsKey('ReleaseOptimization') -and $fileConfig.releaseOptimization) { $ReleaseOptimization = [string]$fileConfig.releaseOptimization }
     if (-not $PSBoundParameters.ContainsKey('KeilCompiler') -and $fileConfig.keilCompiler) { $KeilCompiler = [string]$fileConfig.keilCompiler }
     if (-not $PSBoundParameters.ContainsKey('ConversionBackend') -and $fileConfig.conversionBackend) { $ConversionBackend = [string]$fileConfig.conversionBackend }
-    if (-not $PSBoundParameters.ContainsKey('ExtraDefines') -and $fileConfig.extraDefines) { $ExtraDefines = @($fileConfig.extraDefines | ForEach-Object { [string]$_ }) }
+    if (-not $PSBoundParameters.ContainsKey('ExtraDefines') -and ($fileConfig.PSObject.Properties.Name -contains 'extraDefines')) {
+        $ExtraDefines = @($fileConfig.extraDefines | ForEach-Object { [string]$_ })
+        $extraDefinesConfigured = $true
+    }
+    if (-not $PSBoundParameters.ContainsKey('Defines') -and ($fileConfig.PSObject.Properties.Name -contains 'defines')) {
+        $Defines = @($fileConfig.defines | ForEach-Object { [string]$_ })
+        $definesConfigured = $true
+    }
     if (-not $PSBoundParameters.ContainsKey('Action') -and $rootConfig.action) { $Action = [string]$rootConfig.action }
 
     if ($Action -ne 'doctor' -and $ProjectRoot -and -not (Test-Path -LiteralPath $ProjectRoot)) {
@@ -197,7 +207,8 @@ function Invoke-Engine([string]$Root) {
     if ($ReleaseOptimization) { $engineArguments.ReleaseOptimization = $ReleaseOptimization }
     if ($KeilCompiler) { $engineArguments.KeilCompiler = $KeilCompiler }
     if ($ConversionBackend) { $engineArguments.ConversionBackend = $ConversionBackend }
-    if ($ExtraDefines) { $engineArguments.ExtraDefines = $ExtraDefines }
+    if ($extraDefinesConfigured) { $engineArguments.ExtraDefines = @($ExtraDefines) }
+    if ($definesConfigured -and $Action -ne 'uv2cmake') { $engineArguments.Defines = @($Defines) }
 
     if ($Action -in @('generate', 'configure', 'build') -and $Uvprojx) {
         $fullRoot = [IO.Path]::GetFullPath($Root)
@@ -211,6 +222,24 @@ function Invoke-Engine([string]$Root) {
     }
     & $engine -Action $Action @engineArguments
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+    if ($Action -in @('uv2cmake', 'generate', 'configure', 'build') -and $projectProperty -and $configPath) {
+        $manifestDirectory = if ([IO.Path]::IsPathRooted($CMakeProjectDir)) { $CMakeProjectDir } else { Join-Path $Root $CMakeProjectDir }
+        $manifestPath = Join-Path $manifestDirectory 'stm32-project.json'
+        if (Test-Path -LiteralPath $manifestPath) {
+            $convertedManifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+            $effectiveDefines = @($convertedManifest.defines)
+            $existingDefines = if ($projectProperty.Value.PSObject.Properties.Name -contains 'defines') { @($projectProperty.Value.defines) } else { @() }
+            $mergedDefines = @(@($existingDefines) + @($effectiveDefines) | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
+            if ($projectProperty.Value.PSObject.Properties.Name -contains 'defines') {
+                $projectProperty.Value.defines = $mergedDefines
+            } else {
+                $projectProperty.Value | Add-Member -NotePropertyName defines -NotePropertyValue $mergedDefines
+            }
+            [IO.File]::WriteAllText($configPath, ($rootConfig | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+            Write-Host "Synchronized effective project defines in $configPath" -ForegroundColor Green
+        }
+    }
 }
 
 if ($ProjectRoot) {

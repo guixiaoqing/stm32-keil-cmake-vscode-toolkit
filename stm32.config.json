@@ -21,7 +21,7 @@
       "buildType": "Debug",
       "debugOptimization": "Og",
       "releaseOptimization": "Os",
-      "extraDefines": []
+      "defines": []
     }
   }
 }

@@ -19,12 +19,15 @@ param(
     [string]$KeilCompiler = 'armcc5',
     [ValidateSet('auto', 'cubemx', 'parser')]
     [string]$ConversionBackend = 'auto',
-    [string[]]$ExtraDefines
+    [string[]]$ExtraDefines,
+    [string[]]$Defines
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3
 $ToolRoot = Split-Path -Parent $PSScriptRoot
+$ExtraDefinesSpecified = $PSBoundParameters.ContainsKey('ExtraDefines')
+$DefinesSpecified = $PSBoundParameters.ContainsKey('Defines')
 
 function Resolve-FullPath([string]$Path, [string]$Base = (Get-Location).Path) {
     if ([IO.Path]::IsPathRooted($Path)) { return [IO.Path]::GetFullPath($Path) }
@@ -324,6 +327,43 @@ function Get-Manifest([string]$Root) {
     return (Get-Content -Raw -LiteralPath $path | ConvertFrom-Json)
 }
 
+function Initialize-DefineLayers($Manifest, [string]$Root) {
+    if (-not ($Manifest.PSObject.Properties.Name -contains 'baseDefines')) {
+        $baseDefines = @($Manifest.defines | ForEach-Object { [string]$_ })
+        if (($Manifest.PSObject.Properties.Name -contains 'uvprojx') -and $Manifest.uvprojx) {
+            $uvPath = Resolve-FullPath ([string]$Manifest.uvprojx) $Root
+            if (Test-Path -LiteralPath $uvPath) {
+                [xml]$uvXml = Get-Content -Raw -LiteralPath $uvPath
+                $uvTargets = @($uvXml.Project.Targets.Target)
+                $uvTargetName = if (($Manifest.PSObject.Properties.Name -contains 'uvTarget') -and $Manifest.uvTarget) { [string]$Manifest.uvTarget } else { '' }
+                $uvTarget = if ($uvTargetName) { $uvTargets | Where-Object TargetName -eq $uvTargetName | Select-Object -First 1 } else { $uvTargets | Select-Object -First 1 }
+                if ($uvTarget) {
+                    $baseDefines = @(([string]$uvTarget.TargetOption.TargetArmAds.Cads.VariousControls.Define) -split '[,; ]+' | Where-Object { $_ })
+                }
+            }
+        }
+        $Manifest | Add-Member -NotePropertyName baseDefines -NotePropertyValue @($baseDefines) -Force
+    }
+    if (-not ($Manifest.PSObject.Properties.Name -contains 'chipDefines')) {
+        $Manifest | Add-Member -NotePropertyName chipDefines -NotePropertyValue @() -Force
+    }
+    if (-not ($Manifest.PSObject.Properties.Name -contains 'extraDefines')) {
+        $Manifest | Add-Member -NotePropertyName extraDefines -NotePropertyValue @() -Force
+    }
+    return $Manifest
+}
+
+function Update-EffectiveDefines($Manifest, [string]$Root) {
+    $Manifest = Initialize-DefineLayers $Manifest $Root
+    $Manifest.defines = @(
+        @($Manifest.baseDefines) + @($Manifest.chipDefines) + @($Manifest.extraDefines) |
+            ForEach-Object { [string]$_ } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+    return $Manifest
+}
+
 function Apply-ChipConfig($Manifest, [string]$ConfigPath, [string]$Root) {
     if (-not $ConfigPath) { return $Manifest }
     $path = Resolve-FullPath $ConfigPath
@@ -368,9 +408,9 @@ function Apply-ChipConfig($Manifest, [string]$ConfigPath, [string]$Root) {
             }
         }
     }
-    if ($chip.PSObject.Properties.Name -contains 'definesAppend') {
-        $Manifest.defines = @($Manifest.defines + $chip.definesAppend | Sort-Object -Unique)
-    }
+    $Manifest = Initialize-DefineLayers $Manifest $Root
+    $Manifest.chipDefines = if ($chip.PSObject.Properties.Name -contains 'definesAppend') { @($chip.definesAppend | ForEach-Object { [string]$_ }) } else { @() }
+    $Manifest = Update-EffectiveDefines $Manifest $Root
     $Manifest | Add-Member -NotePropertyName chipConfig -NotePropertyValue (Get-RelativePath $Root $path) -Force
     return (Normalize-MemoryAddresses $Manifest)
 }
@@ -471,10 +511,15 @@ function Convert-KeilOptimization([int]$Value) {
 }
 
 function Apply-ExtraDefines($Manifest) {
-    if ($ExtraDefines) {
-        $Manifest.defines = @(@($Manifest.defines) + @($ExtraDefines) | Sort-Object -Unique)
+    $rootForDefines = if (($Manifest.PSObject.Properties.Name -contains 'sourceRoot') -and $Manifest.sourceRoot) { [string]$Manifest.sourceRoot } elseif ($ProjectRoot) { [string]$ProjectRoot } else { (Get-Location).Path }
+    $Manifest = Initialize-DefineLayers $Manifest $rootForDefines
+    if ($DefinesSpecified) {
+        $Manifest.baseDefines = @($Defines | ForEach-Object { [string]$_ })
     }
-    return $Manifest
+    if ($ExtraDefinesSpecified) {
+        $Manifest.extraDefines = @($ExtraDefines | ForEach-Object { [string]$_ })
+    }
+    return (Update-EffectiveDefines $Manifest $rootForDefines)
 }
 
 function Remove-KeilOnlySources($Manifest, [string]$Root) {
@@ -1157,7 +1202,8 @@ function Import-NativeCMakeProject([string]$Root, [string]$RequestedTarget, [str
         buildSteps=[ordered]@{importedKeilCommandsEnabled=$false;beforeCompile=@();beforeBuild=@();afterBuild=@()}
         nativeCMake=[ordered]@{sourceDirectory=$Root.Replace('\','/');preset=$presetName;compileCommands=$compileDatabase.FullName.Replace('\','/');linkerScript=if($linkerScriptFile){(Get-RelativePath $Root $linkerScriptFile.FullName)}else{''}}
         keilCompiler=$KeilCompiler
-        sources=@($sources | Sort-Object);includeDirectories=@($includes | Sort-Object);defines=@($defines | Sort-Object);sourceOptions=@()
+        sources=@($sources | Sort-Object);includeDirectories=@($includes | Sort-Object)
+        baseDefines=@($defines | Sort-Object);chipDefines=@();extraDefines=@();defines=@($defines | Sort-Object);sourceOptions=@()
         debug=[ordered]@{probe='stlink';openocdConfigFiles=@('interface/stlink.cfg','target/stm32f4x.cfg');svdFile=''}
     }
     $manifest = Apply-ChipConfig $manifest $SelectedChipConfig $Root
@@ -1275,6 +1321,9 @@ function Import-Uvprojx([string]$Path, [string]$Root, [string]$RequestedTarget, 
         }
         sources = @($sources | Sort-Object -Unique)
         includeDirectories = @($includes | Sort-Object -Unique)
+        baseDefines = @($defines | Sort-Object -Unique)
+        chipDefines = @()
+        extraDefines = @()
         defines = @($defines | Sort-Object -Unique)
         sourceOptions = @()
         debug = [ordered]@{ probe='stlink'; openocdConfigFiles=@('interface/stlink.cfg','target/stm32f4x.cfg'); svdFile='' }

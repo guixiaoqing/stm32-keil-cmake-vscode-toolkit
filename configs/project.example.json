@@ -9,7 +9,5 @@
   "buildType": "Debug",
   "debugOptimization": "Og",
   "releaseOptimization": "Os",
-  "extraDefines": [
-    "APP_FEATURE=1"
-  ]
+  "defines": ["USE_HAL_DRIVER", "STM32F411xE", "APP_FEATURE=1"]
 }
