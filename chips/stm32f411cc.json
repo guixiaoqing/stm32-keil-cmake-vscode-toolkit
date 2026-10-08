@@ -36,6 +36,7 @@
       "target/stm32f4x.cfg"
     ],
     "runToEntryPoint": "main",
+    "startMode": "vector",
     "svdFile": ""
   }
 }

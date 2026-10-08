@@ -20,7 +20,9 @@ param(
     [ValidateSet('auto', 'cubemx', 'parser')]
     [string]$ConversionBackend = 'auto',
     [string[]]$ExtraDefines,
-    [string[]]$Defines
+    [string[]]$Defines,
+    [string]$WorkspaceConfigFile,
+    [string]$WorkspaceProject
 )
 
 $ErrorActionPreference = 'Stop'
@@ -401,7 +403,7 @@ function Apply-ChipConfig($Manifest, [string]$ConfigPath, [string]$Root) {
         }
     }
     if ($chip.PSObject.Properties.Name -contains 'debug') {
-        foreach ($key in @('probe', 'interface', 'speedKhz', 'serialNumber', 'serverArgs', 'openocdConfigFiles', 'svdFile', 'runToEntryPoint')) {
+        foreach ($key in @('probe', 'interface', 'speedKhz', 'serialNumber', 'serverArgs', 'openocdConfigFiles', 'svdFile', 'runToEntryPoint', 'startMode')) {
             if ($chip.debug.PSObject.Properties.Name -contains $key) {
                 if ($Manifest.debug.PSObject.Properties.Name -contains $key) { $Manifest.debug.$key = $chip.debug.$key }
                 else { $Manifest.debug | Add-Member -NotePropertyName $key -NotePropertyValue $chip.debug.$key }
@@ -894,6 +896,8 @@ function Write-VscodeFiles($Manifest, [string]$Root) {
     $debugSpeed = if ($debugProperties -contains 'speedKhz') { [int]$Manifest.debug.speedKhz } else { 4000 }
     $debugSerial = if ($debugProperties -contains 'serialNumber') { [string]$Manifest.debug.serialNumber } else { '' }
     $runToEntryPoint = if (($debugProperties -contains 'runToEntryPoint') -and $Manifest.debug.runToEntryPoint) { [string]$Manifest.debug.runToEntryPoint } else { 'main' }
+    $debugStartMode = if (($debugProperties -contains 'startMode') -and $Manifest.debug.startMode) { ([string]$Manifest.debug.startMode).ToLowerInvariant() } else { 'vector' }
+    if ($debugStartMode -notin @('vector', 'reset')) { throw "Unsupported debug.startMode '$debugStartMode'. Use 'vector' or 'reset'." }
     $extraServerArgs = if ($debugProperties -contains 'serverArgs') { @($Manifest.debug.serverArgs) } else { @() }
     $serverPath = if ($probe -eq 'stlink') {
         Find-Executable 'ST-LINK_gdbserver' @((Get-EnvironmentToolPath 'STM32_CUBE_CLT_ROOT' 'STLink-gdb-server/bin/ST-LINK_gdbserver.exe'))
@@ -924,13 +928,19 @@ function Write-VscodeFiles($Manifest, [string]$Root) {
     $programmerPort = if ($probe -eq 'jlink') { 'JLINK' } else { 'SWD' }
     $portableEntry = (Join-Path $ToolRoot 'stm32.ps1').Replace('\','/')
     $projectPath = (Resolve-FullPath $Root).Replace('\','/')
+    $taskProjectArguments = if ($WorkspaceConfigFile -and $WorkspaceProject) {
+        $workspaceConfigPath = (Resolve-FullPath $WorkspaceConfigFile).Replace('\','/')
+        '", "-ConfigFile", "' + $workspaceConfigPath + '", "-Project", "' + $WorkspaceProject
+    } else {
+        '", "-ProjectRoot", "' + $projectPath
+    }
     $tasks = @"
 {
   "version": "2.0.0",
   "tasks": [
-    { "label": "STM32: Configure Debug", "type": "shell", "command": "pwsh", "args": ["-NoProfile", "-File", "$portableEntry", "configure", "-ProjectRoot", "$projectPath", "-Config", "Debug"], "problemMatcher": [] },
-    { "label": "STM32: Build Debug", "type": "shell", "command": "pwsh", "args": ["-NoProfile", "-File", "$portableEntry", "build", "-ProjectRoot", "$projectPath", "-Config", "Debug"], "group": { "kind": "build", "isDefault": true }, "problemMatcher": ["`$gcc"] },
-    { "label": "STM32: Build Release", "type": "shell", "command": "pwsh", "args": ["-NoProfile", "-File", "$portableEntry", "build", "-ProjectRoot", "$projectPath", "-Config", "Release"], "problemMatcher": ["`$gcc"] },
+    { "label": "STM32: Configure Debug", "type": "shell", "command": "pwsh", "args": ["-NoProfile", "-File", "$portableEntry", "configure$taskProjectArguments", "-Config", "Debug"], "problemMatcher": [] },
+    { "label": "STM32: Build Debug", "type": "shell", "command": "pwsh", "args": ["-NoProfile", "-File", "$portableEntry", "build$taskProjectArguments", "-Config", "Debug"], "group": { "kind": "build", "isDefault": true }, "problemMatcher": ["`$gcc"] },
+    { "label": "STM32: Build Release", "type": "shell", "command": "pwsh", "args": ["-NoProfile", "-File", "$portableEntry", "build$taskProjectArguments", "-Config", "Release"], "problemMatcher": ["`$gcc"] },
     { "label": "STM32: Flash at configured address", "type": "shell", "dependsOn": "STM32: Build Debug", "command": "`${config:stm32.programmerPath}", "args": ["-c", "port=$programmerPort", "-d", "$debugOutputDir/$($Manifest.name).bin", "$($Manifest.loadAddress)", "-v", "-rst"], "problemMatcher": [] }
   ]
 }
@@ -950,11 +960,16 @@ function Write-VscodeFiles($Manifest, [string]$Root) {
     $vectorBase = Format-Hex (Convert-HexToInt ([string]$Manifest.debugAddress))
     $resetVectorAddress = Format-Hex ((Convert-HexToInt $vectorBase) + 4)
     $vectorStartCommands = @(
-        "set {unsigned int}0xE000ED08 = $vectorBase",
         "set `$sp = *(unsigned int*)$vectorBase",
         "set `$pc = *(unsigned int*)$resetVectorAddress"
     )
     $vectorStartCommandsJson = ConvertTo-Json -InputObject $vectorStartCommands -Compress
+    $launchVectorLines = if ($debugStartMode -eq 'vector') {
+        '      "postLaunchCommands": ' + $vectorStartCommandsJson + ',' + "`n" +
+        '      "postResetCommands": ' + $vectorStartCommandsJson + ','
+    } else { '' }
+    $attachVectorLine = if ($debugStartMode -eq 'vector') { '      "postAttachCommands": ' + $vectorStartCommandsJson + ',' } else { '' }
+    $attachName = if ($debugStartMode -eq 'vector') { 'STM32: Attach at configured vector table' } else { 'STM32: Attach without changing CPU state' }
     $serverSpecific = if ($probe -eq 'openocd') {
         '      "interface": "' + $debugInterface + '",' + "`n" + '      "serverArgs": ' + $serverArgsJson + ',' + "`n" + '      "configFiles": [' + $configFiles + '],'
     } elseif ($probe -eq 'stlink') {
@@ -980,14 +995,13 @@ $serverPathLine
 $serverSpecific
 $serialLine
 $svdLine
-      "postLaunchCommands": $vectorStartCommandsJson,
-      "postResetCommands": $vectorStartCommandsJson,
+$launchVectorLines
       "runToEntryPoint": "$runToEntryPoint",
       "preLaunchTask": "STM32: Build Debug",
       "showDevDebugOutput": "none"
     },
     {
-      "name": "STM32: Attach at configured vector table",
+      "name": "$attachName",
       "cwd": "`${workspaceFolder}",
       "executable": "$debugOutputDir/$($Manifest.name).elf",
       "request": "attach",
@@ -1000,7 +1014,8 @@ $serverPathLine
 $serverSpecific
 $serialLine
 $svdLine
-      "postAttachCommands": $vectorStartCommandsJson
+$attachVectorLine
+      "showDevDebugOutput": "none"
     }
   ]
 }
@@ -1085,12 +1100,28 @@ function Test-Stm32BuildOutput($Manifest, [string]$Root, [string]$Cfg) {
         throw "Generated launch.json does not target '$entryPoint'."
     }
     $expectedCommands = @(
-        "set {unsigned int}0xE000ED08 = $(Format-Hex $expectedVectorAddress)",
         "set `$sp = *(unsigned int*)$(Format-Hex $expectedVectorAddress)",
         "set `$pc = *(unsigned int*)$(Format-Hex ($expectedVectorAddress + 4))"
     )
-    if ((@($launchConfig.postLaunchCommands) -join "`n") -ne ($expectedCommands -join "`n")) {
+    $debugStartMode = if (($Manifest.debug.PSObject.Properties.Name -contains 'startMode') -and $Manifest.debug.startMode) { ([string]$Manifest.debug.startMode).ToLowerInvariant() } else { 'vector' }
+    $actualLaunchCommands = @(if ($launchConfig.PSObject.Properties.Name -contains 'postLaunchCommands') { @($launchConfig.postLaunchCommands) })
+    if ($debugStartMode -eq 'vector' -and (($actualLaunchCommands -join "`n") -ne ($expectedCommands -join "`n"))) {
         throw 'Generated launch.json vector-table initialization does not match debugAddress.'
+    }
+    if ($debugStartMode -eq 'reset' -and $actualLaunchCommands.Count -ne 0) {
+        throw 'Generated launch.json must not override MSP/PC when debug.startMode is reset.'
+    }
+    $allDebugCommands = @(
+        foreach ($configuration in @($launchJson.configurations)) {
+            foreach ($propertyName in @('postLaunchCommands', 'postResetCommands', 'postAttachCommands')) {
+                if ($configuration.PSObject.Properties.Name -contains $propertyName) {
+                    @($configuration.$propertyName)
+                }
+            }
+        }
+    )
+    if (($allDebugCommands -join "`n") -match '(?i)(E000ED08|VTOR)') {
+        throw 'Generated launch.json must not modify SCB->VTOR; configure VTOR in application code instead.'
     }
 
     $debugServer = [string]$launchConfig.serverpath

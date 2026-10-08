@@ -29,6 +29,7 @@
       "target/stm32h7x.cfg"
     ],
     "runToEntryPoint": "main",
+    "startMode": "vector",
     "svdFile": ""
   }
 }

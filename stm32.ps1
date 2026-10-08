@@ -203,6 +203,10 @@ function Invoke-Engine([string]$Root) {
         Config = $Config
         TargetName = $TargetName
     }
+    if ($configPath -and $projectProperty) {
+        $engineArguments.WorkspaceConfigFile = $configPath
+        $engineArguments.WorkspaceProject = [string]$projectProperty.Name
+    }
     if ($DebugOptimization) { $engineArguments.DebugOptimization = $DebugOptimization }
     if ($ReleaseOptimization) { $engineArguments.ReleaseOptimization = $ReleaseOptimization }
     if ($KeilCompiler) { $engineArguments.KeilCompiler = $KeilCompiler }

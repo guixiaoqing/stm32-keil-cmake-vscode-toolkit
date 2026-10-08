@@ -367,7 +367,7 @@ pwsh ./stm32-keil-cmake-vscode-toolkit/stm32.ps1 generate `
 
 - `memory.flash.origin`：生成后的实际链接地址。在 `unified` 策略下会自动对齐到 `loadAddress`。
 - `loadAddress`：`.bin` 下载地址。
-- `debugAddress`：应用向量表基地址。VS Code 调试会先把 VTOR 指向这里，再从该地址读取 MSP、从 `debugAddress + 4` 读取 Reset_Handler，最后运行到 `main`；不要把它理解为普通指令地址。
+- `debugAddress`：应用向量表基地址。VS Code 调试会从该地址读取 MSP、从 `debugAddress + 4` 读取 Reset_Handler，最后运行到 `main`；它不会修改 VTOR，不要把它理解为普通指令地址。
 - `defaultLinkAddress`：芯片/工程默认链接地址，用于判断是否生成带地址后缀的独立链接文件。
 - `addressPolicy`：默认 `unified`，统一链接、下载和调试地址；高级场景可设为 `independent`，此时三者互不改写，并由使用者自行保证链接脚本和加载方式正确。
 - `debug.openocdConfigFiles`：OpenOCD probe/target 配置。
@@ -391,13 +391,12 @@ pwsh ./stm32-keil-cmake-vscode-toolkit/stm32.ps1 generate `
 对于从 `0x08010000` 等偏移地址运行的应用，生成的调试配置会执行等价于以下操作的 GDB 命令：
 
 ```text
-VTOR = 0x08010000
 MSP  = *(uint32_t *)0x08010000
 PC   = *(uint32_t *)0x08010004
 continue to main
 ```
 
-这样下载调试不依赖默认 Flash 地址处已经存在 bootloader。实际脱离调试器上电运行时仍需要 bootloader 跳转到应用，或由启动流程正确设置 VTOR、MSP 和 PC。
+这样可以从偏移地址启动调试，但生成的 `launch.json` **不会写入 `SCB->VTOR`**。VTOR 是否迁移、迁移到哪个地址，必须由 bootloader 或应用初始化代码决定；例如在工程的 `defines` 中加入自定义宏，再由源码中的 `#ifdef` 控制 `SCB->VTOR` 赋值。实际脱离调试器上电运行时，仍需要 bootloader 跳转到应用，或由启动流程正确设置 VTOR、MSP 和 PC。
 
 ## 配置多个工程
 
@@ -434,7 +433,7 @@ continue to main
 - `arch.cpu`、`arch.fpu`、`arch.floatAbi`：CPU/FPU ABI。
 - `memory.flash`、`memory.ram`：链接内存起始地址和长度。
 - `loadAddress`：BIN 下载地址。
-- `debugAddress`：应用向量表基地址；调试器从这里恢复 VTOR/MSP/Reset_Handler，并运行到 `main`。
+- `debugAddress`：应用向量表基地址；调试器从这里恢复 MSP 和 Reset_Handler 并运行到 `main`，但不会修改 VTOR。
 - `defaultLinkAddress`：默认链接地址。
 - `addressPolicy`：地址同步策略，通常使用 `unified`。
 - `definesAppend`：芯片系列预处理宏。
@@ -443,6 +442,7 @@ continue to main
 - `debug.speedKhz`：调试接口频率，单位 kHz。
 - `debug.serialNumber`：可选探针序列号；多探针环境建议指定。
 - `debug.runToEntryPoint`：下载后自动运行并停止的函数名，默认 `main`。
+- `debug.startMode`：`vector` 会由调试器从 `debugAddress` 读取 MSP 和 Reset_Handler，适合无 bootloader 时直接调试偏移应用；`reset` 不修改 MSP/PC，按芯片真实复位流程启动，与 Keil 的复位运行行为一致，此时偏移应用需要 bootloader 负责跳转。
 - `debug.serverArgs`：额外传给 GDB Server 的参数数组。
 - `debug.openocdConfigFiles`：OpenOCD 接口及目标配置。
 - `debug.svdFile`：可选的芯片 SVD 文件。
