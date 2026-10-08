@@ -1,0 +1,36 @@
+{
+  "device": "STM32F411CC",
+  "keilDevice": "STM32F411CCUx",
+  "keilStartupTemplate": "../templates/stm32f411xe/startup_stm32f411xe.s",
+  "gccStartupTemplate": "../templates/stm32f411xe/gcc/startup_stm32f411xe.s",
+  "arch": {
+    "cpu": "cortex-m4",
+    "fpu": "fpv4-sp-d16",
+    "floatAbi": "hard"
+  },
+  "memory": {
+    "flash": {
+      "origin": "0x08000000",
+      "length": "0x00040000"
+    },
+    "ram": {
+      "origin": "0x20000000",
+      "length": "0x00020000"
+    }
+  },
+  "loadAddress": "0x08000000",
+  "debugAddress": "0x08000000",
+  "defaultLinkAddress": "0x08000000",
+  "addressPolicy": "unified",
+  "definesAppend": ["STM32F411xE"],
+  "debug": {
+    "probe": "jlink",
+    "interface": "swd",
+    "speedKhz": 4000,
+    "serialNumber": "",
+    "serverArgs": [],
+    "openocdConfigFiles": [],
+    "runToEntryPoint": "main",
+    "svdFile": ""
+  }
+}

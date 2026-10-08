@@ -1,0 +1,40 @@
+name: Validate portable release
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  release-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check repository for machine-local data
+        shell: pwsh
+        run: ./scripts/check-release.ps1
+      - name: Validate JSON files
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Filter *.json | ForEach-Object {
+            Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json | Out-Null
+            Write-Host "Valid JSON: $($_.FullName)"
+          }
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count) {
+              throw ($errors | ForEach-Object Message)
+            }
+            Write-Host "Valid PowerShell: $($_.FullName)"
+          }

@@ -1,0 +1,36 @@
+# User-specific settings and secrets
+stm32.local.json
+*.local.json
+.env
+.env.*
+.vscode/
+
+# Generated CMake/build output
+**/build/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/compile_commands.json
+**/CMake-GCC/
+.tmp-*/
+
+# Generated firmware and IDE state
+*.elf
+*.axf
+*.hex
+*.bin
+*.map
+*.o
+*.obj
+*.d
+*.lst
+*.uvoptx
+*.uvguix.*
+*.bak
+*.invalid.bak
+*.log
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+desktop.ini

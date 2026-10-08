@@ -1,0 +1,15 @@
+{
+  "projectRoot": "../../MySTM32Project",
+  "cmakeProjectDir": "CMake-GCC",
+  "uvprojx": "../../MySTM32Project/MDK-ARM/MySTM32Project.uvprojx",
+  "chipConfig": "../chips/stm32f411cc.json",
+  "targetName": "MySTM32Project",
+  "keilCompiler": "armcc5",
+  "conversionBackend": "auto",
+  "buildType": "Debug",
+  "debugOptimization": "Og",
+  "releaseOptimization": "Os",
+  "extraDefines": [
+    "APP_FEATURE=1"
+  ]
+}

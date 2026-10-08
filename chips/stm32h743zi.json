@@ -1,0 +1,34 @@
+{
+  "device": "STM32H743ZITx",
+  "arch": {
+    "cpu": "cortex-m7",
+    "fpu": "fpv5-d16",
+    "floatAbi": "hard"
+  },
+  "memory": {
+    "flash": {
+      "origin": "0x08000000",
+      "length": "0x00200000"
+    },
+    "ram": {
+      "origin": "0x24000000",
+      "length": "0x00080000"
+    }
+  },
+  "loadAddress": "0x08000000",
+  "debugAddress": "0x08000000",
+  "defaultLinkAddress": "0x08000000",
+  "addressPolicy": "unified",
+  "definesAppend": [
+    "STM32H743xx"
+  ],
+  "debug": {
+    "probe": "stlink",
+    "openocdConfigFiles": [
+      "interface/stlink.cfg",
+      "target/stm32h7x.cfg"
+    ],
+    "runToEntryPoint": "main",
+    "svdFile": ""
+  }
+}
